@@ -1,5 +1,303 @@
+Week 9: Spatial Models Part 1
 
 ```{r}
 library(here)
+library(usethis)
+library(sf)
+library(tmap)
+library(spdep)
+library(sp)
+library(spatialreg)
+library(tidyverse)
 ```
 
+Loading Datasets
+
+```{r}
+# read csv
+datafile <- read.csv(here::here("Week 9 - Dataset", "London LSOA 2015 data.csv"), header = TRUE, sep = ",")
+
+# inspect
+datafile %>% 
+  head(., n = 10)
+```
+
+```{r}
+# load shapefiles
+LSOAshp <- read_sf(here::here("Week 9 - Dataset", "London LSOA Areas.shp"))
+BOROUGHshp <- read_sf(here::here("Week 9 - Dataset", "London Borough Areas.shp"))
+```
+
+```{r}
+# inspect
+tm_shape(LSOAshp) +
+  tm_polygons() +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+tm_compass(position = c("right", "top")) +
+  tm_scale_bar(position = c("left", "bottom"))
+```
+
+Reporting basic summary statistical measures
+
+```{r}
+# exploratory descriptive analysis
+datafile %>%
+  summary()
+
+datafile$AVEPRICE %>% 
+  sd()
+
+datafile$AVEINCOME %>%
+  median()
+
+datafile$IMDSCORE %>% 
+  mean()
+```
+
+Exmain the spatial distribution for the house price
+
+```{r}
+# merge datafile to LSOAshp uniquely by using LSOACODE column
+spatialdatafile <- LSOAshp %>% 
+  merge(., datafile, by.x = "LSOACODE", by.y = "LSOACODE")
+
+# inspect
+spatialdatafile %>% 
+  head(., n = 10)
+```
+
+```{r}
+# generate map to inspect distribution of house prices and stores the map as an image object
+
+plot1 <- tm_shape(spatialdatafile) +
+  tm_fill("AVEPRICE", style = "quantile", n = 7, palette = "Greens") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+  tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+
+# plot the image object
+plot1
+```
+
+Let us visualise the three independent variables
+
+```{r}
+# map for income
+plot2 <- tm_shape(spatialdatafile) +
+  tm_fill("AVEINCOME", style = "quantile", n = 7, palette = "Oranges") +
+tm_shape(BOROUGHshp) + 
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+  tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+
+# map for socioeconomic deprivation
+plot3 <- tm_shape(spatialdatafile) +
+  tm_fill("IMDSCORE", style = "quantile", n = 7, palette = "Reds") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+  tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+
+# map for public transport accessibility
+plot4 <- tm_shape(spatialdatafile) +
+  tm_fill("PTACAT", style = "cat", palette = "Blues") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+  tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+
+# stitch the maps together using tmap_arrange() function
+tmap_arrange(plot1, plot2, plot3, plot4, nrow = 2)
+```
+
+```{r}
+# exploratory histogram
+ggplot(spatialdatafile, aes(x = log10(AVEPRICE))) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  labs(title = "Histogram of Average House Price in London", x = "Average Price", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.4))
+
+ggplot(spatialdatafile, aes(x = log10(AVEINCOME))) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  labs(title = "Histogram of Average Income in London", x = "Average Income", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.4))
+
+ggplot(spatialdatafile, aes(x = log10(IMDSCORE))) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  labs(title = "Histogram of IMD Score in London", x = "IMD Score", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.4))
+
+ggplot(spatialdatafile, aes(x = log10(PTAINDEX))) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  labs(title = "Histogram of PTA Index in London", x = "PTA Index", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.4))
+```
+
+
+```{r}
+# lm() function builds a regression model and stores model output into the object 'moderlMLR'
+modelMLR <- lm(log10(AVEPRICE) ~ log10(AVEINCOME) + log10(IMDSCORE) + log10(PTAINDEX), data = spatialdatafile)
+
+# include the 'scipen = 7' argument
+options(scipen = 7)
+
+# call for the report output stored in object modelMLR
+summary(modelMLR)
+```
+
+Use the modelMLR object and extract the residuals output from it
+
+```{r}
+spatialdatafile <- spatialdatafile %>% 
+  mutate(RESIDUALS = residuals(modelMLR))
+
+# report basic summary measures to have an idea of its distribution before plotting them on map
+summary(spatialdatafile$RESIDUALS)
+```
+
+```{r}
+tm_shape(spatialdatafile) +
+  tm_fill("RESIDUALS", style = "cont", midpoint = 0, palette = "-RdBu") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+```
+
+```{r}
+# generate unique number for each row
+spatialdatafile$ROWNUM <- 1:nrow(spatialdatafile)
+
+# we need to coerce the sf spatialdatafile object into a new sp object
+spatialdatafile_sp <- as(spatialdatafile, "Spatial")
+
+# create spatial weights matrix for areas
+weights <- poly2nb(spatialdatafile_sp, row.names = spatialdatafile_sp$ROWNUM)
+weightsmatrix <- nb2mat(weights, style = 'B')
+residual_weightmatrix <- mat2listw(weightsmatrix, style = 'W')
+
+# run the test on regression model output object 'modelMLR' using lm.morantest
+lm.morantest(modelMLR, residual_weightmatrix, alternative = "two.sided")
+```
+
+Since we have a statistically significant value for Moran's I, the errors are somewhat related to each other and thus not independent. Spatial regression would be much more appropriate for modelling this type of data since there is evidence of spatial autocorrelation
+
+When implementing these models, we want to ensure that the spatial autocorrelation are accounted for, and therefore, we have to perform Moran's I test again. Here, we want to make sure that it is lower than what we observed for the linear regression model.
+
+We want to also compare the spatial model against the non-spatial model by checking the AIC values, the one with lowest AIC being the better model
+
+Lastly, as the coefficients derived from the model lagged on the dependent variable are difficult to interpret, we have to estimate a quantity called `impacts` which we will use in the interpretation
+
+```{r}
+# fit model using lagsarlm()
+# reuse spatial weight matrix created earlier as an object called residual_weightmatrix
+modelSLY <- lagsarlm(log10(AVEPRICE) ~ log10(IMDSCORE) + log10(AVEINCOME) + log10(PTAINDEX), data = spatialdatafile_sp, residual_weightmatrix)
+```
+
+```{r}
+# report results with summary()
+# we are interested in the rho coefficient, log-likelihood ratio test's p-value and the AIC
+summary(modelSLY)
+```
+
+In a lag model, do not even try to interpret the coefficientss for the independent variables - ignore them and their p-values, as they are nonsense. This is because there is a global feedback effect happening here i.e. whenever we change something in our own region, like the AVEINCOME in an LSOA, that will not only affect our own house price, but will cause house prices to increase in its neighbours area ... neighbours increasing our own house price etc. - an infinite loop. Instead, we interpret the result churn out from the `impact` function which reports their `direct` and `indirect` effects
+
+```{r}
+# extract the residuals for modelSLY object and dump back to original sf spatialdatafile object
+spatialdatafile$RESID_SLY <- residuals(modelSLY)
+
+# use Moran's I test using moran.mc() function
+moran.mc(spatialdatafile$RESID_SLY, residual_weightmatrix, 1000, zero.policy = T)
+
+
+```
+
+Moran's I of 0.1341 is much lower than that of the original model (0.4748). Although some still remains, we can conclude that spatial lag model does address some of the issues of spatial autocorrelation in the model
+
+```{r}
+# generate the map
+tm_shape(spatialdatafile) +
+  tm_fill("RESID_SLY", style = "cont", midpoint = 0, palette = "-RdBu") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+  tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+```
+
+```{r}
+# interpretation of results using impacts
+weights_2 <- as(residual_weightmatrix, "CsparseMatrix")
+trMC <- trW(weights_2, type = "MC")
+summary(impacts(modelSLY, tr = trMC, R = 100), zstats = TRUE)
+```
+
+Here is where we derive meaningful interpretation of the coefficients. A big table is churned out but we care only about the first table and the lats table. For the direct effects in its own LSOA, if log10(AVEINCOME) were to increase by 1%, this will cause an increase in the property prices by 1.267%. For the indirect effects, if the log10(AVEINCOME) were to change across neighbouring LSOAs, this will affect the value of our house prices by 0.949%. The total column is the combined effect
+
+Spatial Error Models
+
+Essentially the same, but we asusme that the error terms are correlated across observations (i.e. the error of an observed value affects the errors of its neighbours)
+
+```{r}
+modelSER <- errorsarlm(log10(AVEPRICE) ~ log10(IMDSCORE) + log10(AVEINCOME) + log10(PTAINDEX), data = spatialdatafile_sp, residual_weightmatrix)
+```
+
+```{r}
+# report results with summary()
+summary(modelSER)
+```
+
+The lambda statistic informs us that if there's a sudden change in the error term for house prices in neighbouring LSOAs how would it impact the error term for the house prices in our LSOA at y. We can see the AIC for the error model is lower than both the original linear regression & lag model (i.e. Error: -10705.3) therefore the error model is better than the two
+
+Unlike the lag model, we can interpret the coefficients from the error model for the independent variables
+
+```{r}
+# extract the residuals for modelSLY object and dump back to original sf spatialdatafile object
+spatialdatafile$RESID_SER <- modelSER$residuals
+
+# use Moran's I tests using moran.mc() function
+moran.mc(spatialdatafile$RESID_SER, residual_weightmatrix, 1000, zero.policy = T)
+```
+
+The Moran's I from the original model was 0.4748. Here it is -0.0579 which is negative and the lowest for the error model On top of that there is no evidence of spatial autocorrelation since its p-value is not significant. Therefore, we can conclude that the spatial error model does address the issue of sspatial autocorrelation in the residuals.
+
+```{r}
+# generate the map
+
+?tm_text
+
+tm_shape(spatialdatafile) +
+  tm_fill("RESID_SER", style = "cont", midpoint = 0, palette = "-RdBu") +
+tm_shape(BOROUGHshp) +
+  tm_polygons(alpha = 0, border.alpha = 1, border.col = "black") +
+tm_text("BOROUGHN", size = "AREA") +
+tm_compass(position = c("right", "top")) +
+tm_scale_bar(position = c("left", "bottom")) +
+tm_layout(frame = FALSE, legend.title.size = 0.5, legend.text.size = 0.5)
+```
+
+Using a spatially lagged model based on independent variables
+
+```{r}
+modelSLX <- lmSLX(log10(AVEPRICE) ~ log10(IMDSCORE) + log10(AVEINCOME) + log10(PTAINDEX), data = spatialdatafile_sp, residual_weightmatrix)
+
+summary(modelSLX)
+
+IMPACTS_SLX <- impacts(modelSLX, tr = trMC, R=100)
+IMPACTS_SLX
+```
+
+End of Practical
